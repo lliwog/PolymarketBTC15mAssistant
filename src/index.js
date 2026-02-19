@@ -25,6 +25,7 @@ import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
 import { applyGlobalProxyFromEnv } from "./net/proxy.js";
+import { publishTaSnapshot } from "./publish.js";
 
 function countVwapCrosses(closes, vwapSeries, lookback) {
   if (closes.length < lookback || vwapSeries.length < lookback) return null;
@@ -705,6 +706,31 @@ async function main() {
 
       prevSpotPrice = spotPrice ?? prevSpotPrice;
       prevCurrentPrice = currentPrice ?? prevCurrentPrice;
+
+      publishTaSnapshot({
+        timestamp: new Date().toISOString(),
+        marketSlug,
+        timeLeftMin,
+        currentPrice,
+        priceToBeat,
+        spotPrice,
+        upScore: scored.upScore,
+        downScore: scored.downScore,
+        rawUp: scored.rawUp,
+        adjustedUp: timeAware.adjustedUp,
+        adjustedDown: timeAware.adjustedDown,
+        timeDecay: timeAware.timeDecay,
+        regime: regimeInfo.regime,
+        signal,
+        recommendation: rec.action === "ENTER" ? `${rec.side}:${rec.phase}:${rec.strength}` : "NO_TRADE",
+        edgeUp: edge.edgeUp,
+        edgeDown: edge.edgeDown,
+        marketUp,
+        marketDown,
+        rsi: rsiNow,
+        vwapSlope,
+        macdHist: macd?.hist ?? null
+      });
 
       appendCsvRow("./logs/signals.csv", header, [
         new Date().toISOString(),
