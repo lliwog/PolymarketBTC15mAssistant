@@ -10,7 +10,8 @@ import {
   pickLatestLiveMarket,
   fetchClobPrice,
   fetchOrderBook,
-  summarizeOrderBook
+  summarizeOrderBook,
+  fetchCryptoOpenPrice
 } from "./data/polymarket.js";
 import { computeSessionVwap, computeVwapSeries } from "./indicators/vwap.js";
 import { computeRsi, sma, slopeLast } from "./indicators/rsi.js";
@@ -199,16 +200,6 @@ function getBtcSession(now = new Date()) {
   return "Off-hours";
 }
 
-function parsePriceToBeat(market) {
-  const text = String(market?.question ?? market?.title ?? "");
-  if (!text) return null;
-  const m = text.match(/price\s*to\s*beat[^\d$]*\$?\s*([0-9][0-9,]*(?:\.[0-9]+)?)/i);
-  if (!m) return null;
-  const raw = m[1].replace(/,/g, "");
-  const n = Number(raw);
-  return Number.isFinite(n) ? n : null;
-}
-
 const dumpedMarkets = new Set();
 
 function safeFileSlug(x) {
@@ -218,63 +209,6 @@ function safeFileSlug(x) {
     .replace(/-+/g, "-")
     .replace(/(^-|-$)/g, "")
     .slice(0, 120);
-}
-
-function extractNumericFromMarket(market) {
-  const directKeys = [
-    "priceToBeat",
-    "price_to_beat",
-    "strikePrice",
-    "strike_price",
-    "strike",
-    "threshold",
-    "thresholdPrice",
-    "threshold_price",
-    "targetPrice",
-    "target_price",
-    "referencePrice",
-    "reference_price"
-  ];
-
-  for (const k of directKeys) {
-    const v = market?.[k];
-    const n = typeof v === "string" ? Number(v) : typeof v === "number" ? v : NaN;
-    if (Number.isFinite(n)) return n;
-  }
-
-  const seen = new Set();
-  const stack = [{ obj: market, depth: 0 }];
-
-  while (stack.length) {
-    const { obj, depth } = stack.pop();
-    if (!obj || typeof obj !== "object") continue;
-    if (seen.has(obj) || depth > 6) continue;
-    seen.add(obj);
-
-    const entries = Array.isArray(obj) ? obj.entries() : Object.entries(obj);
-    for (const [key, value] of entries) {
-      const k = String(key).toLowerCase();
-      if (value && typeof value === "object") {
-        stack.push({ obj: value, depth: depth + 1 });
-        continue;
-      }
-
-      if (!/(price|strike|threshold|target|beat)/i.test(k)) continue;
-
-      const n = typeof value === "string" ? Number(value) : typeof value === "number" ? value : NaN;
-      if (!Number.isFinite(n)) continue;
-
-      if (n > 1000 && n < 2_000_000) return n;
-    }
-  }
-
-  return null;
-}
-
-function priceToBeatFromPolymarketMarket(market) {
-  const n = extractNumericFromMarket(market);
-  if (n !== null) return n;
-  return parsePriceToBeat(market);
 }
 
 const marketCache = {
@@ -587,11 +521,22 @@ async function main() {
         priceToBeatState = { slug: marketSlug, value: null, setAtMs: null };
       }
 
+      // Fetch exact openPrice from Polymarket crypto-price API
+      if (priceToBeatState.slug && priceToBeatState.source !== "crypto_api" && poly.ok && poly.market) {
+        try {
+          const cryptoOpen = await fetchCryptoOpenPrice(poly.market);
+          if (cryptoOpen !== null) {
+            priceToBeatState = { slug: priceToBeatState.slug, value: cryptoOpen, setAtMs: Date.now(), source: "crypto_api" };
+          }
+        } catch { /* non-fatal */ }
+      }
+
+      // Fallback: latch live Chainlink price
       if (priceToBeatState.slug && priceToBeatState.value === null && currentPrice !== null) {
         const nowMs = Date.now();
         const okToLatch = marketStartMs === null ? true : nowMs >= marketStartMs;
         if (okToLatch) {
-          priceToBeatState = { slug: priceToBeatState.slug, value: Number(currentPrice), setAtMs: nowMs };
+          priceToBeatState = { slug: priceToBeatState.slug, value: Number(currentPrice), setAtMs: nowMs, source: "chainlink_latch" };
         }
       }
 
@@ -687,7 +632,7 @@ async function main() {
         kv("POLYMARKET:", polyHeaderValue),
         liquidity !== null ? kv("Liquidity:", formatNumber(liquidity, 0)) : null,
         settlementLeftMin !== null ? kv("Time left:", `${polyTimeLeftColor}${fmtTimeLeft(settlementLeftMin)}${ANSI.reset}`) : null,
-        priceToBeat !== null ? kv("PRICE TO BEAT: ", `$${formatNumber(priceToBeat, 0)}`) : kv("PRICE TO BEAT: ", `${ANSI.gray}-${ANSI.reset}`),
+        priceToBeat !== null ? kv("PRICE TO BEAT: ", `$${formatNumber(priceToBeat, 0)} ${ANSI.gray}[${priceToBeatState.source ?? "?"}]${ANSI.reset}`) : kv("PRICE TO BEAT: ", `${ANSI.gray}-${ANSI.reset}`),
         currentPriceLine,
         "",
         sepLine(),

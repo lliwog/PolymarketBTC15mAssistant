@@ -199,3 +199,32 @@ export function summarizeOrderBook(book, depthLevels = 5) {
     askLiquidity
   };
 }
+
+/**
+ * Fetch the exact openPrice (priceToBeat) from Polymarket's crypto-price API.
+ * This is the same endpoint the Polymarket UI uses.
+ *
+ * @param {{ eventStartTime: string, endDate: string }} market
+ * @returns {Promise<number|null>} openPrice or null on failure
+ */
+export async function fetchCryptoOpenPrice(market) {
+  const start = market?.eventStartTime;
+  const end = market?.endDate ?? market?.endDateIso;
+  if (!start || !end) return null;
+
+  const url = new URL("https://polymarket.com/api/crypto/crypto-price");
+  url.searchParams.set("symbol", "BTC");
+  url.searchParams.set("eventStartTime", start);
+  url.searchParams.set("variant", "fifteen");
+  url.searchParams.set("endDate", end);
+
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const n = Number(data?.openPrice);
+    return Number.isFinite(n) ? n : null;
+  } catch {
+    return null;
+  }
+}
