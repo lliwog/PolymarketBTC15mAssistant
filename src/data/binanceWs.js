@@ -12,6 +12,9 @@ function buildWsUrl(symbol) {
   return `wss://stream.binance.com:9443/ws/${s}@trade`;
 }
 
+const BINANCE_STALE_MS = 30_000;
+const BINANCE_WATCHDOG_INTERVAL_MS = 15_000;
+
 export function startBinanceTradeStream({ symbol = CONFIG.symbol, onUpdate } = {}) {
   let ws = null;
   let closed = false;
@@ -61,12 +64,25 @@ export function startBinanceTradeStream({ symbol = CONFIG.symbol, onUpdate } = {
 
   connect();
 
+  // Watchdog: if no message arrives for BINANCE_STALE_MS, force a reconnect.
+  const watchdog = setInterval(() => {
+    if (closed) {
+      clearInterval(watchdog);
+      return;
+    }
+    const age = lastTs !== null ? Date.now() - lastTs : Infinity;
+    if (age > BINANCE_STALE_MS && ws) {
+      try { ws.terminate(); } catch { /* ignore */ }
+    }
+  }, BINANCE_WATCHDOG_INTERVAL_MS);
+
   return {
     getLast() {
       return { price: lastPrice, ts: lastTs };
     },
     close() {
       closed = true;
+      clearInterval(watchdog);
       try {
         ws?.close();
       } catch {

@@ -46,6 +46,11 @@ export function startChainlinkPriceStream({
 
   let lastPrice = null;
   let lastUpdatedAt = null;
+  /** Wall-clock time of the last received WS message (any type). */
+  let lastMsgAt = null;
+
+  const STALE_MS = 90_000;
+  const WATCHDOG_INTERVAL_MS = 30_000;
 
   let nextId = 1;
   let subId = null;
@@ -98,6 +103,7 @@ export function startChainlinkPriceStream({
     });
 
     ws.on("message", (buf) => {
+      lastMsgAt = Date.now();
       let msg;
       try {
         msg = JSON.parse(buf.toString());
@@ -141,12 +147,25 @@ export function startChainlinkPriceStream({
 
   connect();
 
+  // Watchdog: if no WS message of any kind arrives for STALE_MS, force a reconnect.
+  const watchdog = setInterval(() => {
+    if (closed) {
+      clearInterval(watchdog);
+      return;
+    }
+    const age = lastMsgAt !== null ? Date.now() - lastMsgAt : Infinity;
+    if (age > STALE_MS && ws) {
+      try { ws.terminate(); } catch { /* ignore */ }
+    }
+  }, WATCHDOG_INTERVAL_MS);
+
   return {
     getLast() {
-      return { price: lastPrice, updatedAt: lastUpdatedAt, source: "chainlink_ws" };
+      return { price: lastPrice, updatedAt: lastUpdatedAt, receivedAt: lastMsgAt, source: "chainlink_ws" };
     },
     close() {
       closed = true;
+      clearInterval(watchdog);
       try {
         if (ws && subId) {
           ws.send(JSON.stringify({ jsonrpc: "2.0", id: nextId++, method: "eth_unsubscribe", params: [subId] }));

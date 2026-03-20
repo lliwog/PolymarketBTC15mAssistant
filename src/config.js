@@ -1,3 +1,6 @@
+import { config as loadDotenv } from "dotenv";
+loadDotenv({ override: false });
+
 export const CONFIG = {
   symbol: "BTCUSDT",
   binanceBaseUrl: "https://api.binance.com",
@@ -31,5 +34,13 @@ export const CONFIG = {
     polygonWssUrls: (process.env.POLYGON_WSS_URLS || "").split(",").map((s) => s.trim()).filter(Boolean),
     polygonWssUrl: process.env.POLYGON_WSS_URL || "",
     btcUsdAggregator: process.env.CHAINLINK_BTC_USD_AGGREGATOR || "0xc907E116054Ad103354f2D350FD2514433D57F6f"
+  },
+
+  // Toggle individual price-feed sources for the settlement price.
+  // Env vars: PRICE_SOURCE_POLYMARKET_WS, PRICE_SOURCE_CHAINLINK_WS, PRICE_SOURCE_CHAINLINK_HTTP ("false" to disable)
+  priceSources: {
+    polymarketWs:  (process.env.PRICE_SOURCE_POLYMARKET_WS  ?? "true").toLowerCase() !== "false",
+    chainlinkWs:   (process.env.PRICE_SOURCE_CHAINLINK_WS   ?? "true").toLowerCase() !== "false",
+    chainlinkHttp: (process.env.PRICE_SOURCE_CHAINLINK_HTTP ?? "true").toLowerCase() !== "false"
   }
 };

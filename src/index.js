@@ -71,13 +71,12 @@ function sepLine(ch = "─") {
 }
 
 function renderScreen(text) {
-  try {
-    readline.cursorTo(process.stdout, 0, 0);
-    readline.clearScreenDown(process.stdout);
-  } catch {
-    // ignore
-  }
-  process.stdout.write(text);
+  // Overwrite in place to avoid flicker: move to top, write each line
+  // clearing only the remainder of each line, then clear any leftover lines.
+  const buf = "\x1b[H" +
+    text.split("\n").map(line => line + "\x1b[K").join("\n") +
+    "\x1b[J";
+  process.stdout.write(buf);
 }
 
 function stripAnsi(s) {
@@ -332,8 +331,8 @@ async function fetchPolymarketSnapshot() {
 
 async function main() {
   const binanceStream = startBinanceTradeStream({ symbol: CONFIG.symbol });
-  const polymarketLiveStream = startPolymarketChainlinkPriceStream({});
-  const chainlinkStream = startChainlinkPriceStream({});
+  const polymarketLiveStream = CONFIG.priceSources.polymarketWs ? startPolymarketChainlinkPriceStream({}) : { getLast: () => null };
+  const chainlinkStream = CONFIG.priceSources.chainlinkWs ? startChainlinkPriceStream({}) : { getLast: () => null };
 
   let prevSpotPrice = null;
   let prevCurrentPrice = null;
@@ -354,24 +353,38 @@ async function main() {
     "recommendation"
   ];
 
+  // Staleness thresholds for WS price feeds
+  const BINANCE_WS_STALE_MS = 30_000;
+  const POLYMARKET_WS_STALE_MS = 60_000;
+  const CHAINLINK_WS_STALE_MS = 90_000;
+
   while (true) {
     const timing = getCandleWindowTiming(CONFIG.candleWindowMinutes);
+    const now = Date.now();
 
     const wsTick = binanceStream.getLast();
-    const wsPrice = wsTick?.price ?? null;
+    const wsPrice = (wsTick?.price != null && wsTick?.ts != null && now - wsTick.ts <= BINANCE_WS_STALE_MS)
+      ? wsTick.price
+      : null;
 
     const polymarketWsTick = polymarketLiveStream.getLast();
-    const polymarketWsPrice = polymarketWsTick?.price ?? null;
+    const polymarketWsPrice = (polymarketWsTick?.price != null && polymarketWsTick?.receivedAt != null && now - polymarketWsTick.receivedAt <= POLYMARKET_WS_STALE_MS)
+      ? polymarketWsTick.price
+      : null;
 
     const chainlinkWsTick = chainlinkStream.getLast();
-    const chainlinkWsPrice = chainlinkWsTick?.price ?? null;
+    const chainlinkWsPrice = (chainlinkWsTick?.price != null && chainlinkWsTick?.receivedAt != null && now - chainlinkWsTick.receivedAt <= CHAINLINK_WS_STALE_MS)
+      ? chainlinkWsTick.price
+      : null;
 
     try {
-      const chainlinkPromise = polymarketWsPrice !== null
+      const chainlinkPromise = CONFIG.priceSources.polymarketWs && polymarketWsPrice !== null
         ? Promise.resolve({ price: polymarketWsPrice, updatedAt: polymarketWsTick?.updatedAt ?? null, source: "polymarket_ws" })
-        : chainlinkWsPrice !== null
+        : CONFIG.priceSources.chainlinkWs && chainlinkWsPrice !== null
           ? Promise.resolve({ price: chainlinkWsPrice, updatedAt: chainlinkWsTick?.updatedAt ?? null, source: "chainlink_ws" })
-          : fetchChainlinkBtcUsd();
+          : CONFIG.priceSources.chainlinkHttp
+            ? fetchChainlinkBtcUsd()
+            : Promise.resolve({ price: null, updatedAt: null, source: "disabled" });
 
       const [klines1m, klines5m, lastPrice, chainlink, poly] = await Promise.all([
         fetchKlines({ interval: "1m", limit: 240 }),
@@ -562,8 +575,13 @@ async function main() {
       const ptbDeltaText = ptbDelta === null
         ? `${ANSI.gray}-${ANSI.reset}`
         : `${ptbDeltaColor}${ptbDelta > 0 ? "+" : ptbDelta < 0 ? "-" : ""}$${Math.abs(ptbDelta).toFixed(2)}${ANSI.reset}`;
+      const priceSourceLabel = chainlink?.source === "polymarket_ws" ? "poly-ws"
+        : chainlink?.source === "chainlink_ws" ? "cl-ws"
+        : chainlink?.source === "chainlink" ? "cl-http"
+        : chainlink?.source === "disabled" ? "disabled"
+        : chainlink?.source ?? "?";
       const currentPriceValue = currentPriceBaseLine.split(": ")[1] ?? currentPriceBaseLine;
-      const currentPriceLine = kv("CURRENT PRICE:", `${currentPriceValue} (${ptbDeltaText})`);
+      const currentPriceLine = kv("CURRENT PRICE:", `${currentPriceValue} (${ptbDeltaText}) ${ANSI.gray}[${priceSourceLabel}]${ANSI.reset}`);
 
       if (poly.ok && poly.market && priceToBeatState.value === null) {
         const slug = safeFileSlug(poly.market.slug || poly.market.id || "market");
@@ -632,7 +650,7 @@ async function main() {
         kv("POLYMARKET:", polyHeaderValue),
         liquidity !== null ? kv("Liquidity:", formatNumber(liquidity, 0)) : null,
         settlementLeftMin !== null ? kv("Time left:", `${polyTimeLeftColor}${fmtTimeLeft(settlementLeftMin)}${ANSI.reset}`) : null,
-        priceToBeat !== null ? kv("PRICE TO BEAT: ", `$${formatNumber(priceToBeat, 0)} ${ANSI.gray}[${priceToBeatState.source ?? "?"}]${ANSI.reset}`) : kv("PRICE TO BEAT: ", `${ANSI.gray}-${ANSI.reset}`),
+        priceToBeat !== null ? kv("PRICE TO BEAT: ", `$${formatNumber(priceToBeat, 2)} ${ANSI.gray}[${priceToBeatState.source ?? "?"}]${ANSI.reset}`) : kv("PRICE TO BEAT: ", `${ANSI.gray}-${ANSI.reset}`),
         currentPriceLine,
         "",
         sepLine(),

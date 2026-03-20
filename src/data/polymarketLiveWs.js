@@ -42,6 +42,10 @@ export function startPolymarketChainlinkPriceStream({
 
   let lastPrice = null;
   let lastUpdatedAt = null;
+  let lastReceivedAt = null;
+
+  const STALE_MS = 60_000;
+  const WATCHDOG_INTERVAL_MS = 20_000;
 
   const connect = () => {
     if (closed) return;
@@ -100,6 +104,7 @@ export function startPolymarketChainlinkPriceStream({
 
       lastPrice = price;
       lastUpdatedAt = updatedAtMs ?? lastUpdatedAt;
+      lastReceivedAt = Date.now();
 
       if (typeof onUpdate === "function") {
         onUpdate({ price: lastPrice, updatedAt: lastUpdatedAt, source: "polymarket_ws" });
@@ -112,12 +117,25 @@ export function startPolymarketChainlinkPriceStream({
 
   connect();
 
+  // Watchdog: if no message with a valid price arrives for STALE_MS, force a reconnect.
+  const watchdog = setInterval(() => {
+    if (closed) {
+      clearInterval(watchdog);
+      return;
+    }
+    const age = lastReceivedAt !== null ? Date.now() - lastReceivedAt : Infinity;
+    if (age > STALE_MS && ws) {
+      try { ws.terminate(); } catch { /* ignore */ }
+    }
+  }, WATCHDOG_INTERVAL_MS);
+
   return {
     getLast() {
-      return { price: lastPrice, updatedAt: lastUpdatedAt, source: "polymarket_ws" };
+      return { price: lastPrice, updatedAt: lastUpdatedAt, receivedAt: lastReceivedAt, source: "polymarket_ws" };
     },
     close() {
       closed = true;
+      clearInterval(watchdog);
       try {
         ws?.close();
       } catch {

@@ -50,7 +50,7 @@ Pure functions operating on arrays of OHLCV candle objects. No external indicato
 
 ### Configuration (src/config.js)
 
-All tuneable parameters live here. Environment variables override defaults for Polymarket slugs, Polygon RPC URLs, and proxy settings. No `.env` file loading — set env vars in your shell before running.
+All tuneable parameters live here. Environment variables override defaults for Polymarket slugs, Polygon RPC URLs, and proxy settings. A `.env` file in the project root is loaded automatically at startup via `dotenv`. Shell environment variables take priority over `.env` values.
 
 ### Proxy (src/net/proxy.js)
 

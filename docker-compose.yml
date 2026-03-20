@@ -1,0 +1,33 @@
+services:
+  assistant:
+    build: .
+    # TTY + stdin_open so the readline-based terminal UI renders correctly
+    tty: true
+    stdin_open: true
+    # Mount the host logs/ directory so ta.latest.json lands on the host
+    volumes:
+      - ./logs:/app/logs
+    environment:
+      # Proxy — leave blank if not needed
+      HTTPS_PROXY: ""
+      HTTP_PROXY: ""
+      ALL_PROXY: ""
+
+      # Polygon RPC (used for Chainlink on-chain price feed)
+      POLYGON_RPC_URL: "https://polygon-rpc.com"
+      POLYGON_RPC_URLS: ""          # comma-separated fallbacks, optional
+      POLYGON_WSS_URL: "wss://polygon-mainnet.g.alchemy.com/v2/DehWtYC_tcUuHm7fZrOGGOB1mjKKYlmY"           # e.g. wss://polygon-bor-rpc.publicnode.com
+      POLYGON_WSS_URLS: ""          # comma-separated fallbacks, optional
+
+      # Chainlink aggregator address on Polygon (BTC/USD)
+      CHAINLINK_BTC_USD_AGGREGATOR: "0xc907E116054Ad103354f2D350FD2514433D57F6f"
+
+      # Polymarket market selection
+      POLYMARKET_SERIES_ID: "10192"
+      POLYMARKET_SERIES_SLUG: "btc-up-or-down-15m"
+      POLYMARKET_SLUG: ""           # pin a specific market slug, or leave blank for auto-select
+      POLYMARKET_AUTO_SELECT_LATEST: "true"
+      POLYMARKET_LIVE_WS_URL: "wss://ws-live-data.polymarket.com"
+      POLYMARKET_UP_LABEL: "Up"
+      POLYMARKET_DOWN_LABEL: "Down"
+    restart: unless-stopped
